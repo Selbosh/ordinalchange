@@ -71,7 +71,7 @@ Q <- function(theta, Y, tau, T) {
     # Compute the sum of squared differences.
     result <- sum((outer(Y, 1:K, '==') - E_Y)^2)
     # Compute the gradient.
-    #attr(result, 'gradient') <- gradient_theta(theta, omega, xi, mu)
+    attr(result, 'gradient') <- gradient_theta(theta, omega, xi, mu)
     return(result)
 }
 

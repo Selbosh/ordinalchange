@@ -1,0 +1,91 @@
+---
+title: "Model estimation"
+author: David Selby
+date: August 2022
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{estimation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+Here we implement the AOP(1) model of Mo Li and QiQi Lu in the paper https://doi.org/10.1002/env.2752, published in _Environmetrics_ in 2022.
+The paper proposes a latent Gaussian process model for ordinal data.
+And several CUSUM statistics for detecting changepoints.
+
+We minimize
+\[Q(\boldsymbol\theta) = \sum_{t=1}^n \sum_{k=1}^K (Y_{t,k} - \mathbb{E}[Y_{t,k}])^2,\]
+where
+\[\mathbb{E}[Y_{tk}] = \Phi(c_k - \mu_t) - \Phi(c_{k-1} - \mu_t).\]
+
+The latent variable $Z_t$ is assumed to have unit variance so that the sum of squares objective function $Q$ does not depend on the autocorrelation parameter $\rho$.
+
+We use Newton's method with a tolerance of $10^{-5}$.
+This is implemented in the `nlm()` function in R.
+Starting values for $\alpha_1, A, D, \Delta$ are set to 0.
+Starting values for $\alpha_0$ and thresholds $c_2,\dots,c_{K-1}$ are $\alpha_0 = -\Phi^{-1}(p_1)$ and $c_k=-\Phi^{-1}\left(\sum_{j=1}^k p_j\right) + \alpha_0, where $p_j$ is the sample proportion of times that $Y_t$ lies in category $j$.
+
+Recall the model definition
+\[
+\mu_t = \alpha_0 + \alpha_1 \frac{t}{n} + s_t + \Delta I_{(t \geq \tau)},
+\]
+where
+\[s_t = A \cos\left(\frac{2\pi}{T} t\right) + D \sin \left(\frac{2\pi}{T}t\right)\]
+and we have parameter vector $\boldsymbol\theta = (c_2, \dots, c_{K-1}, \alpha_0, \alpha_1, A, D, \Delta)$.
+
+The gradient is
+```{r fitting functions}
+#' Estimate the AOP(1) model from Li and Lu (2022)
+#' 
+#' @param Y Integer vector.
+#' @param K Integer number of response categories. If not provided, assumed to be \code{max(Y)}.
+#' 
+#' @source \url{https://doi.org/10.1002/env.2752}
+#' 
+#' @export
+model_estimation <- function(Y, K = max(Y)) {
+    # Initialization
+    theta <- rep(0, K - 2 + 5)
+    theta <- setNames(theta, c(paste0('c', 2:(K-1)), 'a0', 'a1', 'A', 'D', 'Delta'))
+    theta['a0'] <- -qnorm(mean(Y == 1))
+    for (k in 2:(K-1)) {
+      theta[k-1] <- qnorm(mean(Y <= k)) - theta['a0']
+    }
+
+}
+
+xi <- omega <- matrix(nrow = t, ncol = K)
+for (t in 1:n) {
+    for (k in 1:K) {
+        omega[t, k] <- (Y[t] == k) - pnorm(c[k] - mu[t]) - pnorm(c[k-1] - mu[t]) 
+    }
+}
+
+mu <- function(t, alpha0, alpha1, A, D, Delta, tau) {
+    # latent mean vector
+    s <- A * cos(2 * pi * t / T) + D * sin(2 * pi * t / T)
+    alpha0 + alpha1 * t / n + s + Delta * (t >= tau)
+}
+
+gradient <- function(theta) {
+    # returns a gradient vector of length (K - 2) + 5
+    grad <- vector(length = length(theta))
+    K <- length(theta) - 3
+
+}
+```
+
+The Hessian is
+
+## Package usage
+
+```{r setup}
+library(ordinalchange)
+```

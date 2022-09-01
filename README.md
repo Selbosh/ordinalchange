@@ -5,5 +5,6 @@ The paper proposes a latent Gaussian process model for ordinal data.
 And several CUSUM statistics for detecting changepoints.
 
 The API provided in this package is not guaranteed to be stable and may change completely in future versions.
+The code is not guaranteed to be correct or free of bugs!
 
 David Selby, German Research Center for Artificial Intelligence (DFKI)

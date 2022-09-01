@@ -10,12 +10,17 @@
 #' 
 #' @source \url{https://doi.org/10.1002/env.2752}
 #' 
+#' @examples 
+#' Y <- sample(1:3, 50, replace = T)
+#' seq_estimation(Y)
+#' 
 #' @export
-model_estimation <- function(Y, K = max(Y), tau = 10, T = 7, ...) {
+seq_estimation <- function(Y, K = max(Y), tau = 10, L = 7, ...) {
     # Input checking.
     stopifnot(all(Y > 0))
     stopifnot(K > 1)
-    stopifnot(iterations > 0)
+    stopifnot(tau > 1 && tau < length(Y))
+    stopifnot(L > 0)
     
     # Initialization.
     cutpoint <- vector(length = K - 2)
@@ -27,14 +32,52 @@ model_estimation <- function(Y, K = max(Y), tau = 10, T = 7, ...) {
 
 
     # Newton's method.
-    result <- nlm(Q, init_theta, Y = Y, tau = tau, T = T)
+    result <- nlm(Q, init_theta, Y = Y, tau = tau, L = L)
+
+    # Method of moments.
+    theta_hat <- result$estimate
+    mu <- mu(alpha0 = theta_hat[K-1],
+             alpha1 = theta_hat[K],
+             A = theta_hat[K + 1],
+             D = theta_hat[K + 2],
+             Delta = theta_hat[K + 3],
+             Y, tau, L)
+    rho <- estimate_rho(theta_hat, Y, K, mu)
+    return(list(theta = theta_hat, rho = rho))
 }
 
-mu <- function(alpha0, alpha1, A, D, Delta, Y, tau, T) {
+mu <- function(alpha0, alpha1, A, D, Delta, Y, tau, L) {
     t <- seq_along(Y)
     n <- length(Y)
-    s <- A * cos(2 * pi * t / T) + D * sin(2 * pi * t / T)
+    s <- A * cos(2 * pi * t / L) + D * sin(2 * pi * t / L)
     alpha0 + alpha1 * t / n + s + Delta * (t >= tau)
+}
+
+#' @import mvtnorm
+estimate_rho <- function(theta, Y, K = max(Y), mu) {
+    init <- acf(Y, lag.max = 1, plot = FALSE)$acf[2]
+    m <- function(rho) {
+        E_YY <- function(t, k, rho) { # E[Y_t,k Y_{t+1},k]
+            threshold <- c(-Inf, 0, theta[1:(K - 2)], Inf)
+            lower <- threshold[k] # indexed from c_0
+            upper <- threshold[k + 1]
+            mvtnorm::pmvnorm(lower = rep(lower, 2), upper = rep(upper, 2),
+                             mean = mu[t:(t + 1)],
+                             sigma = matrix(c(1, rho, rho, 1), 2))
+        }
+        m <- 0
+        n <- length(Y)
+        for (t in 1:(n - 1))
+          for (k in 1:K)
+            m <- m + E_YY(t, k, rho)
+        return(m)
+    }
+
+    Y_b <- outer(Y, 1:K, '==') # n x K
+    m_hat <- sum(head(Y_b, -1) * tail(Y_b, -1))
+
+    optim(init, function(x) abs(m_hat - m(x)),
+          method = 'L-BFGS-B', lower = -abs(init), upper = abs(init))
 }
 
 #' Sum of squared discrepancies between observations and their expected values
@@ -42,10 +85,10 @@ mu <- function(alpha0, alpha1, A, D, Delta, Y, tau, T) {
 #' @param theta A vector of parameters.
 #' @param Y A vector of ordered categorical responses.
 #' @param tau A candidate changepoint.
-#' @param T The known period of the seasonal component.
+#' @param L The known period of the seasonal component.
 #' 
-#' @export
-Q <- function(theta, Y, tau, T) {
+#' @note The symbol \code{T} has been replaced with \code{L} to avoid confusion with \code{T == TRUE}.
+Q <- function(theta, Y, tau, L) {
     # Unpack the parameters
     K <- length(theta) - 5 + 2
     cutpoints <- c(0, head(theta, K - 2), +Inf)
@@ -57,7 +100,7 @@ Q <- function(theta, Y, tau, T) {
 
     # Compute level probabilities and expected values.
     n <- length(Y)
-    mu <- mu(alpha0, alpha1, A, D, Delta, Y, tau, T)
+    mu <- mu(alpha0, alpha1, A, D, Delta, Y, tau, L)
     E_Y <- xi <- omega <- matrix(nrow = n, ncol = K)
     E_Y[, 1] <- pnorm(0 - mu) - 0 # c0 = -Inf
     xi[, 1] <- dnorm(0 - mu) - 0  # c0 = -Inf
@@ -71,11 +114,11 @@ Q <- function(theta, Y, tau, T) {
     # Compute the sum of squared differences.
     result <- sum((outer(Y, 1:K, '==') - E_Y)^2)
     # Compute the gradient.
-    attr(result, 'gradient') <- gradient_theta(theta, omega, xi, mu)
+    attr(result, 'gradient') <- gradient_theta(theta, omega, xi, mu, tau, L)
     return(result)
 }
 
-gradient_theta <- function(theta, omega, xi, mu) {
+gradient_theta <- function(theta, omega, xi, mu, tau, L) {
     # Unpack the parameters
     K <- length(theta) - 5 + 2
     cutpoints <- c(0, head(theta, K - 2))
@@ -84,11 +127,12 @@ gradient_theta <- function(theta, omega, xi, mu) {
     A <- theta[K + 1]
     D <- theta[K + 2]
     Delta <- theta[K + 3]
-    gradient(cutpoints, alpha0, alpha1, A, D, Delta, omega, xi, mu)
+    gradient(cutpoints, alpha0, alpha1, A, D, Delta, omega, xi, mu, tau, L)
 }
 
-gradient <- function(cutpoints, alpha0, alpha1, A, D, Delta, omega, xi, mu) {
-    d_cutpoints <- vector(length = length(cutpoints)) # d_c1 is redundant
+gradient <- function(cutpoints, alpha0, alpha1, A, D, Delta, omega, xi, mu, tau, L) {
+    K <- length(cutpoints) + 1
+    d_cutpoints <- vector(length = K - 1) # d_c1 is redundant and left NA
     for (k in 2:(K - 1)) {
         d_cutpoints[k] <- 2 * sum((omega[, k + 1] - omega[, k]) * dnorm(cutpoints[k] - mu))
     }
@@ -97,8 +141,8 @@ gradient <- function(cutpoints, alpha0, alpha1, A, D, Delta, omega, xi, mu) {
     n <- length(Y)
     d_alpha0 <- 2 * sum(omega * xi * 1)
     d_alpha1 <- 2 * sum(omega * xi * t / n)
-    d_A <- 2 * sum(omega * xi * cos(2 * pi / T * t))
-    d_D <- 2 * sum(omega * xi * sin(2 * pi / T * t))
+    d_A <- 2 * sum(omega * xi * cos(2 * pi / L * t))
+    d_D <- 2 * sum(omega * xi * sin(2 * pi / L * t))
     d_Delta <- 2 * sum (omega * xi * (t >= tau))
 
     c(d_cutpoints[-1], d_alpha0, d_alpha1, d_A, d_D, d_Delta)

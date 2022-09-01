@@ -69,7 +69,7 @@ estimate_rho <- function(theta, Y, K = max(Y), mu) {
         n <- length(Y)
         for (t in 1:(n - 1))
           for (k in 1:K)
-            m <- m + E_YY(t, k, rho)
+            m <- m + E_YY(t, k, rho) # careful!
         return(m)
     }
 

@@ -4,12 +4,12 @@ author: David Selby
 date: August 2022
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{estimation}
+  %\VignetteIndexEntry{Model estimation}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r, include = FALSE}
+```{r setup, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>"
@@ -40,52 +40,55 @@ where
 \[s_t = A \cos\left(\frac{2\pi}{T} t\right) + D \sin \left(\frac{2\pi}{T}t\right)\]
 and we have parameter vector $\boldsymbol\theta = (c_2, \dots, c_{K-1}, \alpha_0, \alpha_1, A, D, \Delta)$.
 
-The gradient is
-```{r fitting functions}
-#' Estimate the AOP(1) model from Li and Lu (2022)
-#' 
-#' @param Y Integer vector.
-#' @param K Integer number of response categories. If not provided, assumed to be \code{max(Y)}.
-#' 
-#' @source \url{https://doi.org/10.1002/env.2752}
-#' 
-#' @export
-model_estimation <- function(Y, K = max(Y)) {
-    # Initialization
-    theta <- rep(0, K - 2 + 5)
-    theta <- setNames(theta, c(paste0('c', 2:(K-1)), 'a0', 'a1', 'A', 'D', 'Delta'))
-    theta['a0'] <- -qnorm(mean(Y == 1))
-    for (k in 2:(K-1)) {
-      theta[k-1] <- qnorm(mean(Y <= k)) - theta['a0']
-    }
+## Simulation
 
-}
+```{r}
+local({
+  n <- 10000
+  #  K <- 3
+  L <- 3
+  alpha0 <- 0.4307
+  alpha1 <- 0.1
+  A <- 0.3
+  D <- -0.5
+  rho <- 0.5
+  t <- 1:n
+  s <- A * cos(2 * pi / L * t) + D * sin(2 * pi / L * t)
+  mu <- alpha0 + alpha1 * t / n + s # no changepoints yet
+  Z <- rnorm(n, mu, sqrt(1 - rho^2))
+  for (i in 2:n)
+    Z[i] <- Z[i] + rho * (Z[i - 1] - mu[i - 1])
+  Y <- findInterval(Z, c(0, 0.8615)) + 1
+  Y
+}) -> Y
 
-xi <- omega <- matrix(nrow = t, ncol = K)
-for (t in 1:n) {
-    for (k in 1:K) {
-        omega[t, k] <- (Y[t] == k) - pnorm(c[k] - mu[t]) - pnorm(c[k-1] - mu[t]) 
-    }
-}
-
-mu <- function(t, alpha0, alpha1, A, D, Delta, tau) {
-    # latent mean vector
-    s <- A * cos(2 * pi * t / T) + D * sin(2 * pi * t / T)
-    alpha0 + alpha1 * t / n + s + Delta * (t >= tau)
-}
-
-gradient <- function(theta) {
-    # returns a gradient vector of length (K - 2) + 5
-    grad <- vector(length = length(theta))
-    K <- length(theta) - 3
-
-}
+library(ordinalchange)
+seq_estimation(Y, K = 3, L = 3)
+# ignore the last element of theta since we don't have any changepoints
+# should be (0.8615, 0.4307, 0.1, 0.3, -0.5, ___)
+# and rho should be 0.5
 ```
 
-The Hessian is
+```{r}
+local({
+  n <- 10000
+  #  K <- 3
+  L <- 3
+  alpha0 <- 0.4307
+  alpha1 <- 0.1
+  A <- 0.3
+  D <- -0.5
+  rho <- -0.5
+  t <- 1:n
+  s <- A * cos(2 * pi / L * t) + D * sin(2 * pi / L * t)
+  mu <- alpha0 + alpha1 * t / n + s # no changepoints yet
+  Z <- rnorm(n, mu, sqrt(1 - rho^2))
+  for (i in 2:n)
+    Z[i] <- Z[i] + rho * (Z[i - 1] - mu[i - 1])
+  Y <- findInterval(Z, c(0, 0.8615)) + 1
+  Y
+}) -> Y
 
-## Package usage
-
-```{r setup}
-library(ordinalchange)
+seq_estimation(Y, K = 3, L = 3)
+# as above but with rho = -0.5
 ```

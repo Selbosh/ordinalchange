@@ -17,7 +17,7 @@
 #' @source \url{https://doi.org/10.1002/env.2752}
 #' 
 #' @examples 
-#' Y <- sample(1:3, 50, replace = T)
+#' Y <- sample(1:3, 50, replace = TRUE)
 #' seq_estimation(Y)
 #' 
 #' @export

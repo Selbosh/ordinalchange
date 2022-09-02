@@ -7,7 +7,7 @@
 Section 3 of \url{https://doi.org/10.1002/env.2752}
 }
 \usage{
-changepoint_detection(Y, L, K = max(Y), t = 2:(length(Y) - 1), verbose = TRUE)
+changepoint_detection(Y, L, K = max(Y), t = 2:(length(Y) - 1), verbose = FALSE)
 }
 \arguments{
 \item{Y}{Integer vector of responses.}

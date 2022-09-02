@@ -31,7 +31,7 @@ Starting values for \eqn{\alpha_0} and thresholds \eqn{c_2,\dots,c_{K-1}} are \e
 {-1}(p_1)} and \eqn{c_k=-\Phi^{-1}(\sum_{j=1}^k p_j) + \alpha_0}, where \eqn{p_j} is the sample proportion of time
 }
 \examples{
-Y <- sample(1:3, 50, replace = T)
+Y <- sample(1:3, 50, replace = TRUE)
 seq_estimation(Y)
 
 }

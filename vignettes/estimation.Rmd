@@ -63,7 +63,7 @@ local({
 }) -> Y
 
 library(ordinalchange)
-seq_estimation(Y, K = 3, L = 3)
+seq_estimation(Y, tau = 5000, K = 3, L = 3)
 # ignore the last element of theta since we don't have any changepoints
 # should be (0.8615, 0.4307, 0.1, 0.3, -0.5, ___)
 # and rho should be 0.5
@@ -89,6 +89,38 @@ local({
   Y
 }) -> Y
 
-seq_estimation(Y, K = 3, L = 3)
+seq_estimation(Y, tau = 5000, K = 3, L = 3)
 # as above but with rho = -0.5
+```
+
+CUSUM test statistics
+
+```{r}
+changepoint_detection <- function(Y) {
+  n <- length(Y)
+  max_M <- -Inf
+  best_changepoint <- NA
+  K <- 3 ### temporary; to be inferred
+  for (t in seq(2, length(Y) - 1, by = 500)) { # 2:(length(Y) - 1)) {
+    message('Fitting model for timepoint tau = ', t)
+    model <- seq_estimation(Y, tau = t, K = 3, L = 3)
+    theta <- model$theta
+    rho <- model$rho$par
+    mu <- ordinalchange:::mu(alpha0 = theta[K-1],
+                              alpha1 = theta[K],
+                              A = theta[K + 1],
+                              D = theta[K + 2],
+                              Delta = theta[K + 3],
+                              Y, t, L = 3)
+    X_tilde <- ordinalchange:::X_tilde(Y, mu, cutpoints = c(-Inf, 0, theta[1:(K-2)], Inf))
+    eta <- sqrt(ordinalchange:::bartlett_eta(X_tilde))
+    test_M <- abs(sum(X_tilde[1:t]) - t / n * sum(X_tilde)) / sqrt(n)
+    if (test_M > max_M) {
+      message('\tBetter changepoint found: tau = ', t, ' with M = ', test_M)
+      max_M <- test_M
+      best_changepoint <- t
+    }
+  }
+  c(tau = best_changepoint, M = max_M)
+}
 ```

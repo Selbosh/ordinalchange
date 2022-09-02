@@ -1,12 +1,18 @@
 #' Estimate the AOP(1) model from Li and Lu (2022)
 #' 
+#' We use the sequential estimation approach described in that paper.
+#' The latent autocorrelation parameter \eqn{\rho} is estimated separately from the other parameters.
+#' 
 #' The parameter vector is \eqn{\theta = (c_2, \dots, c_{K-1}, \alpha_0, \alpha_1, A, D, \Delta)}.
 #' Starting values for \eqn{\alpha_1, A, D, \Delta} are set to 0.
 #' Starting values for \eqn{\alpha_0} and thresholds \eqn{c_2,\dots,c_{K-1}} are \eqn{\alpha_0 = -\Phi^s that \eqn{Y_t} lies in category \eqn{j}.
 #' {-1}(p_1)} and \eqn{c_k=-\Phi^{-1}(\sum_{j=1}^k p_j) + \alpha_0}, where \eqn{p_j} is the sample proportion of time
+#' 
 #' @param Y Integer vector.
+#' @param tau Time of the proposed changepoints.
 #' @param K Integer number of response categories, denoted \eqn{k = 1, \dots, K}.
-#' @param iterations Number of iterations for Newton's method.
+#' @param L Period of the sinusoidal component.
+#' @param ... Other arguments, ignored.
 #' 
 #' @source \url{https://doi.org/10.1002/env.2752}
 #' 
@@ -15,7 +21,7 @@
 #' seq_estimation(Y)
 #' 
 #' @export
-seq_estimation <- function(Y, K = max(Y), tau = 10, L = 7, ...) {
+seq_estimation <- function(Y, tau, K = max(Y), L = 7, ...) {
     # Input checking.
     stopifnot(all(Y > 0))
     stopifnot(K > 1)

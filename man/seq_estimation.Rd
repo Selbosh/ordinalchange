@@ -17,6 +17,10 @@ seq_estimation(Y, K = max(Y), tau = 10, L = 7, ...)
 \item{iterations}{Number of iterations for Newton's method.}
 }
 \description{
+We use the sequential estimation approach described in that paper.
+The latent autocorrelation parameter \eqn{\rho} is estimated separately from the other parameters.
+}
+\details{
 The parameter vector is \eqn{\theta = (c_2, \dots, c_{K-1}, \alpha_0, \alpha_1, A, D, \Delta)}.
 Starting values for \eqn{\alpha_1, A, D, \Delta} are set to 0.
 Starting values for \eqn{\alpha_0} and thresholds \eqn{c_2,\dots,c_{K-1}} are \eqn{\alpha_0 = -\Phi^s that \eqn{Y_t} lies in category \eqn{j}.

@@ -104,7 +104,7 @@ changepoint_detection(Y, L = 3, t = seq(2, length(Y) - 1, by = 1000),
 
 ```{r}
 local({
-  n <- 2000
+  n <- 1000
   # K <- 3
   L <- 3
   alpha0 <- 0.4307
@@ -113,7 +113,7 @@ local({
   D <- -0.5
   rho <- -0.5
   Delta <- -0.7
-  tau <- 600
+  tau <- 300
   t <- 1:n
   s <- A * cos(2 * pi / L * t) + D * sin(2 * pi / L * t)
   mu <- alpha0 + alpha1 * t / n + s +
@@ -125,7 +125,7 @@ local({
   Y
 }) -> Y
 
-changepoint_detection(Y, L = 3, t = c(2, 100, seq(200, length(Y) - 1, by = 200)),
+changepoint_detection(Y, L = 3, t = c(2, 50, seq(100, length(Y), by = 100)),
                       verbose = TRUE)
 ```
 
@@ -201,19 +201,9 @@ options(mc.cores = parallel::detectCores())
 model <- stan_model(model_code = model_code)
 ```
 
-```{r eval = T, fig.width = 6, fig.height = 6}
+```{r eval = T}
 result <- optimizing(model, data = list(Y = Y, T = length(Y), K = 3, Period = 3))
 lp <- result$theta_tilde[, paste0('lp[', seq_along(Y), ']')]
-
-log_sum_exp <- function(x) {
-  m <- max(x)
-  m + log(sum(exp(x - m)))
-}
-
-softmax <- function(x) exp(x - log_sum_exp(x))
-
-plot(lp, xlab = 't', main = 'Log probability from joint posterior (Stan)', type = 'l')
-plot(softmax(lp), xlab = 't', main = 'Stan changepoint algorithm output', type = 'l')
-
-which.max(lp)
+softmax <- function(x) exp(x) / sum(exp(x))
+plot(softmax(lp), xlab = 't', main = 'Stan changepoint algorithm output')
 ```

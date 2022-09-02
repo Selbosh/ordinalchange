@@ -7,14 +7,18 @@
 \url{https://doi.org/10.1002/env.2752}
 }
 \usage{
-seq_estimation(Y, K = max(Y), tau = 10, L = 7, ...)
+seq_estimation(Y, tau, K = max(Y), L = 7, ...)
 }
 \arguments{
 \item{Y}{Integer vector.}
 
+\item{tau}{Time of the proposed changepoints.}
+
 \item{K}{Integer number of response categories, denoted \eqn{k = 1, \dots, K}.}
 
-\item{iterations}{Number of iterations for Newton's method.}
+\item{L}{Period of the sinusoidal component.}
+
+\item{...}{Other arguments, ignored.}
 }
 \description{
 We use the sequential estimation approach described in that paper.

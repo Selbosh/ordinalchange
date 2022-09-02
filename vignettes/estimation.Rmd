@@ -93,34 +93,117 @@ seq_estimation(Y, tau = 5000, K = 3, L = 3)
 # as above but with rho = -0.5
 ```
 
-CUSUM test statistics
+## CUSUM test statistics
+
+Currently the test statistic $M_X$ is implemented. Others may be added in the future.
 
 ```{r}
-changepoint_detection <- function(Y) {
-  n <- length(Y)
-  max_M <- -Inf
-  best_changepoint <- NA
-  K <- 3 ### temporary; to be inferred
-  for (t in seq(2, length(Y) - 1, by = 500)) { # 2:(length(Y) - 1)) {
-    message('Fitting model for timepoint tau = ', t)
-    model <- seq_estimation(Y, tau = t, K = 3, L = 3)
-    theta <- model$theta
-    rho <- model$rho$par
-    mu <- ordinalchange:::mu(alpha0 = theta[K-1],
-                              alpha1 = theta[K],
-                              A = theta[K + 1],
-                              D = theta[K + 2],
-                              Delta = theta[K + 3],
-                              Y, t, L = 3)
-    X_tilde <- ordinalchange:::X_tilde(Y, mu, cutpoints = c(-Inf, 0, theta[1:(K-2)], Inf))
-    eta <- sqrt(ordinalchange:::bartlett_eta(X_tilde))
-    test_M <- abs(sum(X_tilde[1:t]) - t / n * sum(X_tilde)) / sqrt(n)
-    if (test_M > max_M) {
-      message('\tBetter changepoint found: tau = ', t, ' with M = ', test_M)
-      max_M <- test_M
-      best_changepoint <- t
+changepoint_detection(Y, L = 3, t = seq(2, length(Y) - 1, by = 1000),
+                      verbose = TRUE)
+```
+
+```{r}
+local({
+  n <- 1000
+  # K <- 3
+  L <- 3
+  alpha0 <- 0.4307
+  alpha1 <- 0.1
+  A <- 0.3
+  D <- -0.5
+  rho <- -0.5
+  Delta <- -0.7
+  tau <- 300
+  t <- 1:n
+  s <- A * cos(2 * pi / L * t) + D * sin(2 * pi / L * t)
+  mu <- alpha0 + alpha1 * t / n + s +
+      Delta * (t >= tau) # changepoint
+  Z <- rnorm(n, mu, sqrt(1 - rho^2))
+  for (i in 2:n)
+    Z[i] <- Z[i] + rho * (Z[i - 1] - mu[i - 1])
+  Y <- findInterval(Z, c(0, 0.8615)) + 1
+  Y
+}) -> Y
+
+changepoint_detection(Y, L = 3, t = c(2, 50, seq(100, length(Y), by = 100)),
+                      verbose = TRUE)
+```
+
+## Equivalent model in stan
+
+Basing this on https://mc-stan.org/docs/stan-users-guide/change-point.html
+
+But it is very inefficient at the moment so it might be better either to use Julia (for Gibbs sampling) or just not do this at all, treating changepoints as a 'bad idea'.
+
+```{r eval = T}
+model_code <- "data {
+  int<lower=1> T; // Length of time series
+  int<lower=1> K; // Number of response categories
+  int<lower=1, upper=K> Y[T]; // Observations
+  int<lower=1> Period; // Known period of seasonal component
+}
+
+transformed data {
+  real log_unif = -log(T);
+}
+
+parameters {
+  real A;
+  real D;
+  real alpha0;
+  real alpha1;
+  real Delta; // level shift at changepoint
+  ordered[K - 2] threshold;
+  real<lower=-1,upper=1> rho;
+}
+
+transformed parameters {
+  vector[K-1] cutpoints = append_row(0, threshold); // for identifiability
+  vector[T] lp;
+  lp = rep_vector(log_unif, T);
+  {
+    for (cp in 1:T) {
+      vector[T] Z;
+      vector[T] mu;
+      for (t in 1:T) {
+        real s;
+        s = A * cos(2 * pi() / Period * t) + D * sin(2 * pi() / Period * t);
+        mu[t] = alpha0 + alpha1 * (t * 1.0 / T) + s + (t >= cp ? Delta : 0);
+        if (t == 1) {
+          Z[t] = mu[t];
+        } else {
+          Z[t] = mu[t] + rho * (Z[t - 1] - mu[t - 1]);
+        }
+        lp[cp] = lp[cp] + ordered_probit_lpmf(Y[t] | Z[t], cutpoints);
+      }
     }
   }
-  c(tau = best_changepoint, M = max_M)
 }
+
+model {
+  A ~ normal(0, 3);
+  D ~ normal(0, 3);
+  alpha0 ~ normal(0, 3);
+  alpha1 ~ normal(0, 3);
+  Delta ~ normal(0, 3);
+  threshold ~ normal(0, 3);
+  target += log_sum_exp(lp);
+}
+
+//generated quantities {
+//  int<lower=1, upper=T> tau;
+//  tau = categorical_logit_rng(lp); // Highly inefficient. Just use softmax(lp)??
+//}"
+
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+model <- stan_model(model_code = model_code)
+```
+
+```{r eval = T}
+result <- optimizing(model, data = list(Y = Y, T = length(Y), K = 3, Period = 3))
+lp <- result$theta_tilde[, paste0('lp[', seq_along(Y), ']')]
+softmax <- function(x) exp(x) / sum(exp(x))
+plot(softmax(lp), xlab = 't', main = 'Stan changepoint algorithm output')
 ```

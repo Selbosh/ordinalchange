@@ -1,0 +1,666 @@
+---
+title: Change points in ordinal time series
+author: David A. Selby
+date: August 2022
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE)
+```
+
+The Overleaf ($\LaTeX$) document is at https://www.overleaf.com/project/62dfa299bcc736d607a6da79
+
+First, let's try to implement the ideas in the paper [Structural change detection in ordinal time series](https://doi.org/10.1371/journal.pone.0256128).
+(I've emailed the authors to see if they are willing to share any code).
+
+In the binary case,
+
+\[\begin{aligned}
+    S_n(\beta)
+    &= \sum_t \nabla_\beta \ell (\beta)
+     = \sum_{t=1}^n Z_{t-1}\bigl(Y_t - \pi_t(\beta)\bigr) \\
+    &= \sum_{t=1}^n Z_{t-1} \left(Y_t - \frac{\exp\{\beta'Z_{t-1}\}}{1 + \exp\{\beta'Z_{t-1}\}} \right)
+\end{aligned}\]
+
+Can we do this using the **ordinal** package?
+
+```{r message = FALSE}
+library(ordinal)
+library(dplyr)
+wine2 <- wine %>%
+  mutate(rowid = row_number(),
+         rating_ = lag(rating),
+         temp_ = lag(temp))
+model1 <- clm(rating ~ contact + temp, data = wine)
+model1
+```
+
+Or we could try **MASS::polr**:
+
+```{r}
+library(MASS)
+model2 <- polr(rating ~ contact + temp, data = wine)
+model2
+```
+
+https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.459.2859&rep=rep1&type=pdf
+
+Online Change-Point Detection in Categorical Time Series by Michael Höhle
+
+-----------------------------------------
+Regression Theory for Categorical Time Series, by Konstantinos Fokianos and Benjamin Kedem (_Statistical Science_ 2003 Vol 13 No 3).
+See especially Section 3.2: Models for Ordinal Time Series
+
+One-hot encoding
+\[
+Y_{tj} =
+\begin{cases}
+  1, & \text{if the }j\text{th category is observed at time }t,\\
+  0, & \text{otherwise,}
+\end{cases}
+\]
+for timepoint $t = 1,\dots,N$ and category $j=1,\dots,q$.
+
+The partial log-likelihood is given by 
+\[
+  \ell(\beta) \equiv \log \text{PL}(\beta) = \sum_{t=1}^N \sum_{j=1}^m y_{tj} \log \pi_{tj}(\beta).
+\]
+
+Maximum partial likelihood involves solving the partial score equations
+\[\nabla \ell(\beta) = \nabla\log\text{PL}(\beta) = 0,\]
+by Fisher scoring.
+
+In the case of a cumulative logistic (proportional odds) model we have
+\[\begin{aligned}
+\pi_{t1}(\beta) &= \text{logit}^{-1}(\eta_{t1}) \\
+\pi_{tj}(\beta) &= \text{logit}^{-1}(\eta_{tj}) - \text{logit}^{-1}(\eta_{t(j-1)}),
+\end{aligned}\]
+where $\boldsymbol\eta_t = \mathbf{Z}_{t-1}'\boldsymbol\beta$.
+
+Here $\mathbf{Z}_{t-1}$ denotes the $(q+d) \times q$ matrix
+\[\mathbf{Z}_{t-1} =
+\begin{bmatrix}
+1 & 0 & \cdots & 0 \\
+0 & 1 & \cdots & 0 \\
+\vdots & \vdots & \ddots & \vdots \\
+0 & 0 & \cdots & 1 \\
+\mathbf{z}_{t-1} & \mathbf{z}_{t-1} & \cdots & \mathbf{z}_{t-1}
+\end{bmatrix},\]
+and $\boldsymbol\beta = (\theta_1, \dots, \theta_q, \boldsymbol\gamma)$ is a vector of parameters (where $\theta_i$ is the $i$th threshold).
+
+```{r}
+matrix_sqrt <- function(x) {
+  e <- eigen(x)
+  v <- e$vectors
+  v %*% diag(sqrt(e$values)) %*% t(v)
+}
+
+matrix_inv_sqrt <- function(x) {
+  solve(matrix_sqrt(x))
+}
+
+a <- matrix(c(1, .2, .2,
+              .2, 1, .2,
+              .2, .2, 1), ncol = 3)
+
+matrix_sqrt(a)
+all.equal(tcrossprod(matrix_sqrt(a)), a)
+
+matrix_inv_sqrt(a)
+all.equal(solve(tcrossprod(matrix_inv_sqrt(a))), a)
+```
+
+## Test statistic
+
+The test statistic is an information matrix
+\[
+\hat{T}_n = \hat{T}(\hat{\beta}_n) = \frac1n \sum_{t=1}^n Z_{t-1}Z_{t-1}' \pi_t(\hat{\beta}_n)(1 - \pi_t(\hat\beta_n)),
+\]
+where $\hat\beta_n$ is the maximum partial likelihood estimate of the model regression coefficients based on the entire available data.
+
+```{r}
+pi_t <- function(beta, t) {
+  h(t(Z(t-1)) %*% beta)
+}
+
+h <- function(eta) {
+  exp(eta) / (1 + rowSums(eta))
+}
+
+test_stat <- function(beta) {
+  # ignore the 't' indices and sum operator for now
+  # and focus on calculating it for a single time point
+  # recall from http://dx.doi.org/10.1016/j.jspi.2013.08.017
+  # that the Z matrix can include lagged previous responses
+  # pi(\beta) = expit(\betaZ) (or rather exp(eta_tj) / (1 + sum_l(exp(eta_tl))))
+  # where eta_t = Z_{t-1}'\beta
+  # q = m - 1 where m is the number of categories
+  # q = number of cutpoints (excluding -inf and +inf)
+  # (see RHS of p.360)
+  # expit = plogis()
+  # logit = qlogis()
+  z %*% t(z) 
+}
+
+n <- 100
+ex1 <- data.frame(t = 1:n,
+                  z1 = rnorm(n, -2, sd = 3),
+                  z2 = rnorm(n, 0, sd = 3),
+                  z3 = rnorm(n, 3, sd = 3))
+true_cutpts <- c(-.1, .3, .9) # so there are 4 levels, 3 thresholds
+n_cutpts <- length(true_cutpts)
+true_gamma <- c(-.5, 3, 1) # no, we assume these vary by group
+ex1$x <- data.matrix(ex1[, -1]) %*% true_gamma + rnorm(n, 3)
+ex1$x <- c(NA, head(ex1$x, -1)) # t-1
+ex1$y <- findInterval(ex1$x, true_cutpts) + 1
+y_dummy <- matrix(0, n, 4)
+y_dummy[cbind(1:n, ex1$y)] <- 1
+
+Z <- function(t) {
+  # rbind(diag(3)) # no, check the notation in the paper
+  # the z_{t-1}s should be repeated for each dummy var.
+  if (t < min(ex1$t) || t > max(ex1$t))
+    stop('t must be within range ', paste(range(ex1$t), collapse = ', '))
+  q <- n_cutpts
+  rbind(
+    diag(q),
+    replicate(q, ex1[t, c('z1', 'z2', 'z3')], simplify = TRUE)
+  )
+}
+
+
+Z(1)
+```
+
+The partial score vector is
+
+```{r}
+score_t <- function(beta, t, Y) {
+  Z(t-1) %*% (Y[t, ] - plogis(beta %*% Z(t-1)))
+}
+```
+
+```{r}
+
+```
+
+# Reset (rewrite from scratch)
+
+We use as the main reference _Regression Theory for Categorical Time Series_, since its notation appears to be most clear, comprehensive and error free.
+As well as explaining the nominal case they show the ordinal case.
+
+## Notation
+
+- Let $\mathbf{Y}_t = (Y_{t1},\dots,Y_{tq})'$ be the one-hot vector of length $q=m-1$ representing the responses, where there are $m$ possible response categories (the $m$-th category is redundant as it is 'none of the above').
+- Let $\boldsymbol\beta$ be a $p$-dimensional vector of time-invariant parameters.
+- Let $\mathbf{Z}_{t-1}$ stand for a $p\times q$ matrix that represents a covariate process (i.e.\ each response category has its own vector of coefficients of length $p$, but of course there is only one set of $p$ *covariates*, simply replicated/stacked for each of the $q$ response category levels).
+We can also generalize to $q$ sets of coefficient vectors $\boldsymbol\beta_j$, each of length $d$.
+In special cases (not always, but I think it applies in our case) we may have $p = qd$, in other words every level has its own coefficient vector of the same length (with no shared coefficients among the different levels).
+
+Let $\mathbf{h}$ be the vector-valued function whose components $h_j, j=1,\dots,q$ are given by (at least, in the nominal case)
+\[\begin{aligned}
+  \pi_{tj}(\boldsymbol\beta) 
+   &= h_j(\boldsymbol\eta_t)
+\\ &= \frac{\exp(\eta_{tj})}{1 + \sum_{l=1}^q \exp(\eta_{tl})},
+\hspace{1em} j=1,\dots,q,
+\end{aligned}\]
+with
+\[
+  \boldsymbol\eta_t = (\eta_{t1},\dots,\eta_{tq})' = \mathbf{Z}_{t-1}'\boldsymbol\beta.
+  \]
+
+So for the ordinal case(?), $\mathbf{Z}_{t-1}$ denotes the $qd \times q$ matrix
+\[\mathbf{Z}_{t-1} =
+\begin{bmatrix}
+1 & 0 & \cdots & 0 \\
+0 & 1 & \cdots & 0 \\
+\vdots & \vdots & \ddots & \vdots \\
+0 & 0 & \cdots & 1 \\
+\mathbf{z}_{t-1} & \mathbf{z}_{t-1} & \cdots & \mathbf{z}_{t-1}
+\end{bmatrix},\]
+
+## Partial likelihood
+
+Recall the derivative of the logistic function $h(x) = \frac1{1 + e^{-x}}$ is $h'(x) = (1 - h(x))h(x)$.
+We denote this latter expression (in the original paper) by $\mathbf{D}_t(\boldsymbol\beta)$.
+
+Also possibly useful is the derivative of the logit function: $\text{logit}'(x) = \frac{\partial}{\partial x}\log(\frac{x}{1-x}) = \log(x) - \log(1-x)$.
+
+The conditional covariance matrix $\boldsymbol\Sigma_t(\boldsymbol\beta)$ has elements
+\[\sigma_t^{(ij)}(\boldsymbol\beta) = \begin{cases}
+-\pi_{ti}(\boldsymbol\beta)(\pi_{tj}(\boldsymbol\beta)), & i\neq j, \\
+\pi_{ti}(\boldsymbol\beta)(1 - \pi_{ti}(\boldsymbol\beta)), & i = j,
+\end{cases}\]
+for $i,j=1,\dots,q$.
+
+We can alternatively use the function $\mathbf{u} = h(\text{logit})$, and in the multinomial case the functions essentially cancel each other out(???) because $\text{logit}(\mathbf{x}) = \left[\log(\frac{x_i}{1 - \sum_{j=1}^q x_{j}})\right]_i$.
+
+In the ordinal case,
+$\pi_{tj} = F(\theta_j + \boldsymbol\gamma' \mathbf{z}_{t-1}) - F(\theta_{j-1} + \boldsymbol\gamma' \mathbf{z}_{t-1}),$ where $F$ is the logistic function (i.e.\ the 'expit' or inverse-logit), so then
+\[\pi_{t1}(\boldsymbol\beta) = F(\eta_{t1})\]
+and
+\[\pi_{tj}(\boldsymbol\beta) = F(\eta_{tj}) - F(\eta_{t(j-1)}),\]
+for $j=2,\dots,q$ and $\boldsymbol\eta_t = \mathbf{Z}_{t-1}'\boldsymbol\beta$ and $\mathbf{Z}_{t-1}$ defined as the identity matrix stacked on top of the repeated $\mathbf{z}_{t-1}$ vectors, as given in the previous sub-section.
+
+## Implementation
+
+```{r}
+# maximize
+#' @param y A matrix of dimension \eqn{N \times q}
+partial_likelihood <- function(beta, z, y) {
+  acc <- 0
+  q <- length(beta) - ncol(z)
+  for (j in 1:q) {
+    for (t in 2:N) {
+      acc <- acc + y[t, j] * log(pi(t, j, beta, z))
+    }
+  }
+  acc
+}
+
+pi <- function(t, j, beta, z) {
+  q <- length(beta) - ncol(z)
+  stopifnot(j >= 1 && j <= q)
+  Z <- rbind(diag(q),
+             replicate(q, t(z[t - 1, ]), simplify = TRUE))
+  eta <- t(Z) %*% beta
+  # F in this case is the logistic F(x)=1/(1+exp(-x)).
+  plogis(eta[j]) - if (j > 1) plogis(eta[j - 1]) else 0
+}
+
+# solve equal to zero
+partial_score <- function(beta, z, y) {
+  acc <- 0
+  q <- length(beta) - ncol(z)
+  for (t in 1:N) {
+    Z <- rbind(q, replicate(q, t(z[t - 1, ]), simplify = TRUE))
+    eta <- t(Z) %*% beta
+    D <- vector(length(q))
+    for (j in 1:q) {
+      D[j] <- plogis(eta[j]) * (1 - plogis(eta[j])) -
+        if (j > 1) plogis(eta[j - 1]) * (1 - plogis(eta[j - 1])) else 0
+    }
+    Sigma <- matrix(NA, q, q)
+    for (i in 1:q)
+      for (j in 1:q)
+        Sigma[i, j] <- if (i == j) {
+          pi(t, i, beta, z) * (1 - pi(t, i, beta, z))
+        } else {
+          - pi(t, i, beta, z) * pi(t, j, beta, z)
+        }
+    pi_vec <- vector(length = q)
+    for (j in 1:q)
+      pi_vec[j] <- pi(t, j, beta, z)
+    Y <- 1:q == y[t]
+    acc <- acc + Z %*% D %*% solve(Sigma) %*% (Y - pi_vec)
+  }
+  acc
+}
+```
+
+```{r}
+n <- 500
+example1 <- data.frame(t = 1:n,
+                       z1 = rnorm(n, -2, sd = 3),
+                       z2 = rnorm(n, 0, sd = 3),
+                       z3 = rnorm(n, 3, sd = 3))
+                       
+# "theta" = vector of latent cutpoints/thresholds
+true_theta <- c(-.1, .3, .9) # so there are 4 levels, 3 thresholds
+n_cutpts <- length(true_theta)
+true_gamma <- c(3, -.5, 3, 1) # beta is c(theta, gamma)
+example1$x <- cbind(1, data.matrix(example1[, -1])) %*% true_gamma + rnorm(n, 1)
+example1$x <- c(NA, head(example1$x, -1)) # t-1
+example1$y <- findInterval(example1$x, true_theta) + 1
+y_dummy <- matrix(0, n, n_cutpts + 1)
+y_dummy[cbind(1:n, example1$y)] <- 1
+```
+
+```{r}
+partial_likelihood(beta = c(true_theta, true_gamma),
+                   z = example1[, c('z1', 'z2', 'z3')],
+                   y = y_dummy[, -1])
+
+optim(c(.1, .2, .3, .4, .5, .6),
+      function(beta) -1 * partial_likelihood(beta,
+        z = example1[, c('z1', 'z2', 'z3')],
+        y = y_dummy[, -1]),
+      gr = function(beta) partial_score(beta,
+                                        z = example1[, c('z1', 'z2', 'z3')],
+                                        y = y_dummy[, -1])
+)
+```
+
+```{r}
+library(rstan)
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
+model <- stan_model(model_name = 'ordinal', model_code = "data {
+  int<lower=1> N; // number of observations
+  int<lower=1> C; // number of possible categories
+  int<lower=1,upper=C> Y[N]; // categorical responses
+  int<lower=1> D; // number of covariates
+  matrix[N, D] Z; // covariates (should probably include an intercept)
+}
+parameters {
+  ordered[C-1] thresholds; // latent cutpoints for ordered logistic
+  vector[D] beta; // coefficients
+}
+transformed parameters {
+  vector[N-1] eta; // latent process
+  eta = Z[1:(N-1), :] * beta; // defined for Y[2:N]
+  // equivalently we could have eta of length N with eta[1] redundant/undefined,
+  // but this throws warnings after sampling that may be distracting
+}
+model {
+  thresholds ~ std_normal();
+  beta ~ normal(0, 3);
+  Y[2:N] ~ ordered_logistic(eta, thresholds);
+  // In this autoregressive process, Y[1] is not modelled explicitly
+}")
+fit <- sampling(model, data = list(
+  N = nrow(example1),
+  C = 4,
+  Y = replace(example1$y, is.na(example1$y), 1),
+  D = 4,
+  Z = cbind(1, example1[, c('z1', 'z2', 'z3')])
+))
+print(fit, pars = 'eta', include = F)
+plot(fit, pars = c('log-posterior', 'eta'), include = FALSE)
+```
+
+
+-------------
+
+https://doi.org/10.1080/00224065.2017.11917983
+Multivariate Ordinal Categorical Process Control Based on Log-Linear Modeling
+
+SPC concepts:
+
+- Control charts
+- CUSUM
+
+-----
+
+https://onlinelibrary.wiley.com/doi/10.1002/qre.2414#citedby-section
+
+```{r}
+# test a location shift: has pain gone up or down?
+# n_i number of obs belonging to level i in sample of size N
+# n = vector of (n_1, n_2, ..., n_h) (total = N)
+# n_a vector
+
+example <- data.frame(x = rnorm(100))
+example$y <- findInterval(example$x, c(-.5, -.1, .3))
+example$t <- seq_along(example$x)
+
+ordinal_change <- function() {
+
+}
+
+# How do we calculate p?
+# p_i = F(d_i) - F(d_{i-1})
+# ln(p) = 1 * b_0 + y * b (equation 5)
+# with t(1) * p = 1
+# so if beta_0 and beta are just given as parameters,
+# what is "y"?
+# y = [s_1, ..., s_h]
+# with s_k = c_k + c_{k-1} - 1 | some type of standardized ranks
+# see Ding et al(30) for details
+# c_k = \sum_{j=1}^k (p_j) with c_0 = 0
+
+
+```
+
+> For instance, suppose that there are 9 observations of an ordinal variable with 3 levels, with 2 observations at level 1, 3 observations at level 2, and 4 observations at level 3. First, the observations are ordered with ranks from 1 to 9 according to their levels, and the ranks of those at the same level can be arbitrarily decided. Then, we take the average of the ranks at each attribute level and assign the average to all the observations at that level. Therefore, the ranks of the nine observations are 1.5, 1.5, 4, 4, 4, 7.5, 7.5, 7.5, 7.5.
+
+```{r}
+obs <- c(1, 1, 2, 2, 2, 3, 3, 3, 3)
+exp <- c(1.5, 1.5, 4, 4, 4, 7.5, 7.5, 7.5, 7.5)
+stopifnot(all(rank(obs) == exp))
+
+std_rank2 <- function(x) {
+  N <- length(x)
+  y <- vector(length = N)
+  for (n in unique(x))
+    y[x == n] <- (mean(x < n) + 1 / N + mean(x <= n)) / 2
+  return(y)
+}
+
+std_rank2(obs)
+
+# "Standardized ranks of ordinal categorical data also take values between 0 and 1 and have mean 0.5"
+# mean(exp) / (length(exp) + 1) == 0.5
+# possibly it includes c_0 = 0
+mean(exp / (length(exp) + 1))
+
+std_rank <- function(x) {
+  # Ding, Dong; Tsung, Fugee; Li, Jian (2016). Rank-based Process Control for Mixed-Type Data. IIE Transactions. doi:10.1080/0740817x.2015.1126002 
+  # aka "ridit" (Bross, 1958)
+  rank(x) / length(x)
+}
+
+score_fn <- function() {
+  t(y) %*% (n_a + n_b) - (N_a + N_b) * t(y) %*% exp(beta_0a + y %*% beta_a)
+}
+
+ordinal_model <- function(x) {
+  n <- table(x)
+  N <- length(x)
+  s <- rank(x) / length(x)
+  y <- sort(unique(s))
+  one <- rep(1, length(y))
+  beta <- rnorm(1)
+  for (i in 1:100) {
+    p <- exp(-one %*% log(t(one) %*% exp(y * beta)) + y * beta)
+    stopifnot('Level probabilities must add up to one' = abs(sum(p) - 1) < 1e-10)
+    score <- t(y) %*% n - N * t(y) %*% p
+    Sigma <- diag(p) - p %*% t(p)
+    G <- - N * t(y) %*% Sigma %*% y
+    beta <- drop(beta - solve(G) %*% score)
+    if (i == 1 || i %% 5 == 0)
+    message(sprintf('Iteration %2d', i), ' | beta = ', beta)
+  }
+  beta
+}
+
+x <- c(1, 1, 2, 2, 2, 3, 3, 3, 3)
+x <- sample(1:3, 500, replace = T)
+x2 <- 4 - x
+ordinal_model(x)
+ordinal_model(x2)
+```
+
+## Mo Li and QiQi Lu (2022)
+
+Changepoint detection in autocorrelated ordinal categorical time series
+
+```{r}
+library(mvtnorm)
+
+optimize_theta <- function(theta) {
+  # theta = (c_2, ..., c_{K-1}, a0, a1, A, D, Delta)
+  # where c_k are the threshold parameters
+  # c0 = 0 (to avoid confounding with a0)
+  # A: coef of cos(2pi/T t)
+  # D: coef of sin(2pi/T t) T is the *known* period
+  # a0: intercept
+  # a1: scaled temporal trend (coef of t/n)
+  # where n is the number of timepoints, i.e. t = 1,...,n
+  # Delta: mean shift after timepoint t>=Tau
+  # If we use nlm() function we can supply Hessian
+  # as attr('gradient') and attr('hessian')
+  # otherwise they will be computed numerically
+  # E[Y_t,k] = P(Y_t = k) = phi(c_k - mu_t) - phi(c_{k-1} - mu_t)
+  # where it's assumed Z_t ~ N(\mu_t, 1)
+}
+
+log_likelihood <- function(theta) {
+
+}
+
+simulate_data <- function(a0, a1, A, D, Delta, n, T, tau,
+                          cutpoints, rho) {
+  stopifnot(abs(rho) <= 1)
+  stopifnot(n > 0)
+  stopifnot(T > 0)
+  stopifnot(tau >= 1 & tau <= n)
+  stopifnot(all(order(cutpoints) == seq_along(cutpoints)))
+  stopifnot(all(cutpoints > 0))
+  cutpoints <- c(0, cutpoints) # c0 = -Inf, c1 = 0, ..., cK = +Inf
+  t <- seq_len(n)
+  s <- A * cos(2 * pi / T * t) + D * sin(2 * pi / T * t)
+  mu <- a0 + a1 * t / n + s + Delta * (t >= tau)
+  Z <- rnorm(n, mu, sqrt(1 - rho^2)) # eps_t Gaussian noise
+  for (i in 2:n) {
+    Z[i] <- Z[i] + rho * (Z[i-1] - mu[i-1]) # AR(1) process
+  }
+  Y <- findInterval(Z, cutpoints) + 1
+}
+
+# later: just try and fit this in Stan
+```
+
+```{r}
+molu <- "
+data {
+  int<lower=1> K; // number of response levels
+  int<lower=1> n; // number of observations: t = 1,...,n
+  int<lower=1,upper=K> Y[n]; // ordered categorical observations
+  int<lower=1,upper=n> T; // period of seasonal component
+}
+parameters {
+  ordered[K-2] c;
+  real<lower=-1,upper=1> rho;
+  real alpha0;
+  real alpha1;
+  real A;
+  real D;
+  // real Delta; // first try without changepoints
+  vector[n] Z;
+}
+transformed parameters {
+  vector[K-1] cutpoints = append_row(0, c); // for identifiability
+  vector[n] s; // periodic
+  vector[n] mu; // latent mean
+  for (t in 1:n) {
+    s[t] = A * cos (2 * pi() / T * t) + D * sin(2 * pi() / T * t);
+    mu[t] = alpha0 + alpha1 * t / n + s[t];
+  }
+}
+model {
+  alpha0 ~ normal(0, 3);
+  alpha1 ~ normal(0, 3);
+  A ~ normal(0, 3);
+  D ~ normal(0, 3);
+  c ~ lognormal(0, 1);
+  Z[1] ~ normal(mu[1], sqrt(1 - rho^2));
+  for (t in 2:n) {
+    Z[t] ~ normal(mu[t] + rho * (Z[t-1] - mu[t-1]), sqrt(1 - rho^2));
+  }
+  Y ~ ordered_probit(Z, cutpoints);
+}
+"
+
+sim <- "
+data {
+  int<lower=1> K; // number of response levels
+  int<lower=1> n; // number of observations: t = 1,...,n
+  ordered[K-2] c;
+  real<lower=-1,upper=1> rho;
+  int<lower=1,upper=n> T;
+  real alpha0;
+  real alpha1;
+  real A;
+  real D;
+}
+parameters {
+
+}
+transformed parameters {
+  vector[K-1] cutpoints = append_row(0, c); // for identifiability
+  vector[n] s; // periodic
+  vector[n] mu; // latent mean
+  for (t in 1:n) {
+    s[t] = A * cos (2 * pi() / T * t) + D * sin(2 * pi() / T * t);
+    mu[t] = alpha0 + alpha1 * t / n + s[t];
+  }
+}
+model {
+  //c ~ normal(0, 1);
+  //Z[1] ~ normal(mu[1], sqrt(1 - rho^2));
+  //for (t in 2:n) {
+//    Z[t] ~ normal(mu[t] + rho * (Z[t-1] - mu[t-1]), sqrt(1 - rho^2));
+  //}
+  //Y ~ ordered_probit(Z, cutpoints);
+}
+generated quantities {
+  vector[n] Z;
+  int Y[n];
+  Z[1] = normal_rng(mu[1], sqrt(1 - rho^2));
+  for (i in 1:n) {
+    if (i > 1)
+      Z[i] = normal_rng(mu[i] + rho * (Z[i-1] - mu[i-1]), sqrt(1 - rho^2));
+    Y[i] = ordered_probit_rng(Z[i], cutpoints);
+  }
+}
+"
+library(rstan)
+molu_model <- stan_model(model_code = molu)
+molu_sim <- stan_model(model_code = sim)
+
+fake_data <- sampling(molu_sim, data = list(K = 4, n = 50, c = c(.5, 2),
+                                            rho = -.5, T = 7,
+                                            alpha0 = -1, # intercept
+                                            alpha1 = 1, # long-term trend
+                                            A = .5, D = -.5), chains = 1, algorithm = 'Fixed_param')
+
+local({
+  y <- extract(fake_data, 'Y')[[1]][1000, ]
+  z <- extract(fake_data, 'Z')[[1]][1000, ]
+  library(ggplot2)
+  ggplot(data.frame(t = 1:50, y = y, z = z)) +
+    aes(t, z) +
+    geom_hline(yintercept = c(0, .5, 1)) +
+    geom_line(alpha = .2) +
+    geom_point(aes(colour = as.factor(y)))
+})
+
+options(mc.cores = parallel::detectCores())
+fitted_model <- sampling(molu_model, data = list(Y = extract(fake_data, 'Y')[[1]][4000, ],
+                                                 K = 4, n = 50, T = 7), chains = 2)
+fitted_model
+```
+
+
+Stan, how does it work?
+
+```{r}
+ordinal_test <- "
+data {
+  int n;
+  int K;
+  ordered[K-1] cutpoints;
+  vector[n] x;
+}
+generated quantities {
+  int y[n];
+  for (i in 1:n)
+    y[i] = ordered_probit_rng(x[i], cutpoints);
+}
+"
+
+ordinal_test_stan <- stan_model(model_code = ordinal_test)
+test_output <- sampling(ordinal_test_stan, data = list(n = 1000, K = 3, cutpoints = c(-.67, +.67), x = seq(-2, 2, length = 1000)),
+                        iter = 1000, chains = 1, algorithm = 'Fixed_param')
+
+y <- extract(test_output, 'y')[['y']][500, ]
+#x <- extract(test_output, 'x')[['x']][500, ]
+x <- seq(-2, 2, length = 1000)
+plot(x, type = 'o', col = y + 1, pch = 16)
+abline(h = c(-.67, .67))
+legend('topleft', legend = 3:1, col = 4:2, pch = 16)
+```
+
+The take-away here is that the thresholds are not hard. 
